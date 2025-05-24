@@ -190,10 +190,13 @@ docker-compose up -d
 **STDIO (Local):**
 ```json
 {
-  "name": "Hacker News",
-  "command": "python",
-  "args": ["/path/to/hacker-news-mcp/run.py", "--transport", "stdio"],
-  "env": { "LOG_LEVEL": "info" }
+  "mcpServers": {
+    "hackerNews": {
+      "command": "python",
+      "args": ["/path/to/hacker-news-mcp/run.py", "--transport", "stdio"],
+      "env": { "LOG_LEVEL": "info" }
+    }
+  }
 }
 ```
 
