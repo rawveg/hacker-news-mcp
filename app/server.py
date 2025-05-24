@@ -754,6 +754,8 @@ def main():
     """Main entry point for the server."""
     import argparse
     import asyncio
+    import uvicorn
+    import threading
     from fastapi import FastAPI
     from starlette.middleware.cors import CORSMiddleware
     from starlette.responses import JSONResponse
@@ -777,12 +779,30 @@ def main():
     log_level = getattr(logging, args.log_level.upper())
     logger.setLevel(log_level)
     
-    # For SSE transport, we need to create a FastAPI app with our health check endpoint
-    if args.transport == "sse":
-        # Create a FastAPI app for the health check endpoint
+    # Run the server with the specified transport
+    if args.transport == "stdio":
+        # For stdio transport, just run the MCP server directly
+        asyncio.run(setup())
+        mcp.run(transport="stdio")
+        # Call teardown function directly for stdio transport
+        asyncio.run(teardown())
+    
+    elif args.transport == "sse":
+        # For SSE transport, we need to set up a FastAPI app
+        from fastapi import FastAPI
+        from fastapi.openapi.utils import get_openapi
+        
+        # Run setup
+        asyncio.run(setup())
+        
+        # Create a FastAPI app
         app = FastAPI(
-            title="Hacker News MCP Server",
-            description="Health check endpoint for the Hacker News MCP Server",
+            title="Hacker News API",
+            description="API and MCP server for accessing Hacker News data and functionality",
+            version="1.0.0",
+            docs_url="/docs",
+            redoc_url="/redoc",
+            openapi_url="/openapi.json",
         )
         
         # Add CORS middleware
@@ -795,16 +815,18 @@ def main():
         )
         
         # Add health check endpoint
-        @app.get("/health")
+        @app.get("/health", tags=["System"], 
+                 summary="Health check endpoint",
+                 description="Check if the server is healthy and can connect to the Hacker News API")
         async def health_endpoint():
             try:
                 max_id = await fetch_hn_data("maxitem.json")
-                return JSONResponse({
+                return {
                     "status": "healthy",
                     "timestamp": datetime.now().isoformat(),
                     "service": "hacker-news-mcp",
                     "max_item_id": max_id
-                })
+                }
             except Exception as e:
                 logger.error(f"Health check failed: {e}")
                 return JSONResponse(
@@ -817,39 +839,169 @@ def main():
                     }
                 )
         
-        # Register startup and shutdown handlers
-        @app.on_event("startup")
-        async def startup_event():
-            await setup()
+        # --- Item Endpoints ---
+        @app.get("/api/item/{item_id}", tags=["Items"], response_model=Item,
+                summary="Get a Hacker News item by ID",
+                description="Retrieve a Hacker News item (story, comment, job, etc.) by its unique ID")
+        async def api_get_item(item_id: int):
+            return await get_item(item_id)
+            
+        @app.get("/api/user/{username}", tags=["Users"], response_model=User,
+                summary="Get a Hacker News user by username",
+                description="Retrieve a Hacker News user profile by their unique username")
+        async def api_get_user(username: str):
+            return await get_user(username)
+            
+        @app.get("/api/maxitem", tags=["Items"], 
+                summary="Get the maximum item ID",
+                description="Get the current largest item ID from Hacker News")
+        async def api_get_max_item_id():
+            return await get_max_item_id()
+            
+        # --- Story Listings ---
+        @app.get("/api/stories/top", tags=["Stories"], 
+                summary="Get top stories",
+                description="Get the top stories from Hacker News")
+        async def api_get_top_stories(limit: Optional[int] = 30):
+            return await get_top_stories(limit)
+            
+        @app.get("/api/stories/new", tags=["Stories"], 
+                summary="Get new stories",
+                description="Get the newest stories from Hacker News")
+        async def api_get_new_stories(limit: Optional[int] = 30):
+            return await get_new_stories(limit)
+            
+        @app.get("/api/stories/best", tags=["Stories"], 
+                summary="Get best stories",
+                description="Get the best stories from Hacker News")
+        async def api_get_best_stories(limit: Optional[int] = 30):
+            return await get_best_stories(limit)
+            
+        @app.get("/api/stories/ask", tags=["Stories"], 
+                summary="Get Ask HN stories",
+                description="Get the latest Ask HN stories")
+        async def api_get_ask_stories(limit: Optional[int] = 30):
+            return await get_ask_stories(limit)
+            
+        @app.get("/api/stories/show", tags=["Stories"], 
+                summary="Get Show HN stories",
+                description="Get the latest Show HN stories")
+        async def api_get_show_stories(limit: Optional[int] = 30):
+            return await get_show_stories(limit)
+            
+        @app.get("/api/stories/job", tags=["Stories"], 
+                summary="Get job stories",
+                description="Get the latest job stories from Hacker News")
+        async def api_get_job_stories(limit: Optional[int] = 30):
+            return await get_job_stories(limit)
+            
+        # --- Advanced Story Retrieval ---
+        @app.get("/api/story/{story_id}/comments", tags=["Stories"], 
+                summary="Get a story with comments",
+                description="Get a story with its top comments")
+        async def api_get_story_with_comments(story_id: int, comment_limit: int = 10):
+            return await get_story_with_comments(story_id, comment_limit)
+            
+        @app.get("/api/stories/search", tags=["Search"], 
+                summary="Find stories by title",
+                description="Find Hacker News stories that match a title query or keywords")
+        async def api_find_stories_by_title(query: str, limit: int = 5):
+            return await find_stories_by_title(query, limit)
+            
+        @app.get("/api/story/by-title", tags=["Search"], 
+                summary="Get a story by title",
+                description="Find and retrieve a story by its title or keywords, along with its comments")
+        async def api_get_story_by_title(title: str):
+            return await get_story_by_title(title)
+            
+        # --- Other Endpoints ---
+        @app.get("/api/updates", tags=["Updates"], response_model=UpdatesResponse,
+                summary="Get latest updates",
+                description="Get the latest item and profile changes from Hacker News")
+        async def api_get_updates():
+            return await get_updates()
+            
+        @app.get("/api/stories/by-date", tags=["Search"], 
+                summary="Search stories by date",
+                description="Search for stories from approximately N days ago")
+        async def api_search_by_date(days_ago: int = 1, limit: Optional[int] = 30):
+            return await search_by_date(days_ago, limit)
         
+        # Register shutdown handler
         @app.on_event("shutdown")
         async def shutdown_event():
             await teardown()
-    
-    # Run the server with the specified transport
-    try:
-        # Call setup function directly for stdio transport
-        if args.transport == "stdio":
-            asyncio.run(setup())
         
-        # Run the MCP server
-        if args.transport == "sse":
-            # For SSE transport, we need to pass host, port, and log_level
-            mcp.run(
-                transport=args.transport,
-                host=args.host,
-                port=args.port,
-                log_level=args.log_level
+        # Customize OpenAPI schema with tags
+        def custom_openapi():
+            if app.openapi_schema:
+                return app.openapi_schema
+            openapi_schema = get_openapi(
+                title=app.title,
+                version=app.version,
+                description=app.description,
+                routes=app.routes,
             )
-        else:
-            # For stdio transport - it doesn't accept log_level
-            mcp.run(
-                transport=args.transport
+            openapi_schema["tags"] = [
+                {"name": "Items", "description": "Operations related to Hacker News items (stories, comments, etc.)"},
+                {"name": "Users", "description": "Operations related to Hacker News users"},
+                {"name": "Stories", "description": "Operations related to story listings and retrieval"},
+                {"name": "Search", "description": "Search operations for finding stories"},
+                {"name": "Updates", "description": "Operations for getting updates from Hacker News"},
+                {"name": "System", "description": "System operations like health checks"}
+            ]
+            app.openapi_schema = openapi_schema
+            return app.openapi_schema
+            
+        app.openapi = custom_openapi
+        
+        # Add SSE endpoint information
+        @app.get("/sse-info", tags=["System"],
+                summary="SSE endpoint information",
+                description="Get information about the SSE endpoint for MCP integration")
+        async def sse_info():
+            return {
+                "sse_endpoint": f"http://{args.host}:{args.port}/sse",
+                "description": "Server-Sent Events endpoint for MCP integration",
+                "usage": "Connect to this endpoint to use the MCP protocol over SSE"
+            }
+        
+        # Create a route for the SSE endpoint
+        from starlette.responses import Response
+        from starlette.background import BackgroundTask
+        
+        @app.get("/sse")
+        async def sse_endpoint():
+            # This is a simple SSE endpoint that FastMCP will use
+            return Response(
+                content="",
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "Content-Type": "text/event-stream",
+                }
             )
-    finally:
-        # Call teardown function directly for stdio transport
-        if args.transport == "stdio":
-            asyncio.run(teardown())
+        
+        # Start the FastMCP server in a separate thread
+        def run_mcp_server():
+            mcp.run(transport="stdio")
+        
+        # Start the MCP server in a background thread
+        mcp_thread = threading.Thread(target=run_mcp_server)
+        mcp_thread.daemon = True
+        mcp_thread.start()
+        
+        # Print information about the server
+        print(f"Starting Hacker News MCP Server with {args.transport} transport")
+        print(f"Server will be available at: http://{args.host}:{args.port}")
+        print(f"API documentation: http://{args.host}:{args.port}/docs")
+        print(f"SSE endpoint: http://{args.host}:{args.port}/sse")
+        
+        # Run the FastAPI app with uvicorn
+        uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level.lower())
+    
+
 
 if __name__ == "__main__":
     main()

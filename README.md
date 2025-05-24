@@ -29,7 +29,6 @@
 
 ---
 
-
 ## 🌟 Features
 
 - ⚡ **Multiple Transport Modes**: STDIO/MCP and SSE/MCP for flexible LLM/agent integration
@@ -40,6 +39,79 @@
 - 🐳 **Container Ready**: Docker & Docker Compose for painless deployment
 - ❤️ **Health Monitoring**: Built-in health check endpoint
 - 🔒 **CORS Support**: Secure and configurable origins for web integration
+
+---
+
+## 📚 API Endpoints
+
+All endpoints are available by default at `http://localhost:8000` (or your configured host/port).
+
+### 🔎 REST API Endpoints
+
+#### **Stories**
+- `GET /api/stories/top?limit=30` — Get top stories
+- `GET /api/stories/best?limit=30` — Get best stories
+- `GET /api/stories/new?limit=30` — Get newest stories
+- `GET /api/stories/ask?limit=30` — Get Ask HN stories
+- `GET /api/stories/show?limit=30` — Get Show HN stories
+- `GET /api/stories/search?query=YOUR_QUERY&limit=5` — Search for stories by title or keywords
+- `GET /api/stories/by-date?days_ago=1&limit=30` — Get stories from N days ago
+
+#### **Story Details**
+- `GET /api/item/{item_id}` — Get a Hacker News item by ID
+- `GET /api/story/by-title?title=YOUR_TITLE` — Get a story (and comments) by title/keywords
+- `GET /api/story/{story_id}/comments?comment_limit=10` — Get a story and its top comments
+
+#### **Users**
+- `GET /api/user/{username}` — Get a Hacker News user by username
+
+#### **System & Updates**
+- `GET /api/maxitem` — Get the current largest item ID
+- `GET /api/updates` — Get latest item and profile changes
+- `GET /health` — Health check endpoint
+- `GET /sse-info` — Info about the SSE endpoint
+
+#### **SSE & MCP**
+- `GET /sse` — Server-Sent Events (SSE) endpoint for MCP protocol
+
+#### **OpenAPI & Docs**
+- `GET /docs` — Swagger UI (interactive API docs)
+- `GET /openapi.json` — OpenAPI schema (for tool integration)
+
+### 🗣️ Natural Language & Title-Based Queries
+
+You can search and retrieve stories using natural language or keywords, not just numeric IDs!
+
+- **Example:**
+    - `GET /api/stories/search?query=quantum computing` — Find stories about quantum computing
+    - `GET /api/story/by-title?title=React framework` — Get the latest story and comments about React framework
+
+- **Natural Language-Friendly:**
+    - "Tell me about that story on quantum computing from yesterday"
+    - "What's the discussion about the new React framework like?"
+
+These queries are handled via `/api/stories/search` and `/api/story/by-title` endpoints.
+
+### 🧑‍💻 Example Usage
+
+**Search for stories by title/keywords:**
+```bash
+curl "http://localhost:8000/api/stories/search?query=AI+ethics&limit=3"
+```
+**Get a story and its comments by title:**
+```bash
+curl "http://localhost:8000/api/story/by-title?title=OpenAI+GPT-4"
+```
+**Health check:**
+```bash
+curl "http://localhost:8000/health"
+```
+**Get top stories:**
+```bash
+curl "http://localhost:8000/api/stories/top?limit=5"
+```
+
+See `/docs` for full interactive documentation and try endpoints live.
 
 ---
 
@@ -160,8 +232,8 @@ docker-compose up -d
   - `get_max_item_id()`: Get the current largest item ID
 - 🏆 **Story Listings**
   - `get_top_stories(limit)`: Get top stories
-  - `get_new_stories(limit)`: Get newest stories
   - `get_best_stories(limit)`: Get best stories
+  - `get_new_stories(limit)`: Get newest stories
   - `get_ask_stories(limit)`: Get Ask HN stories
   - `get_show_stories(limit)`: Get Show HN stories
   - `get_job_stories(limit)`: Get job stories
