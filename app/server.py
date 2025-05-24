@@ -8,7 +8,7 @@ It supports multiple operational modes including HTTP Streamable, STDIO/MCP, and
 import os
 import json
 import asyncio
-from typing import Dict, List, Optional, Union, Any
+from typing import Dict, List, Optional, Union, Any, Literal
 from datetime import datetime
 import logging
 
@@ -16,6 +16,8 @@ import httpx
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
+from bs4 import BeautifulSoup
+import html2text
 
 # Load environment variables
 load_dotenv()
@@ -74,6 +76,19 @@ class UpdatesResponse(BaseModel):
     """Model for updates response"""
     items: List[int] = Field(description="IDs of changed items")
     profiles: List[str] = Field(description="IDs of changed profiles")
+    
+class ContentResponse(BaseModel):
+    """Model for content response"""
+    title: str = Field(description="Title of the content")
+    url: str = Field(description="URL of the content")
+    content: str = Field(description="Content in text or markdown format")
+    content_type: str = Field(description="Type of content (text, markdown, html)")
+    story_id: int = Field(description="ID of the Hacker News story")
+    by: Optional[str] = Field(None, description="Author of the story")
+    time: Optional[int] = Field(None, description="Timestamp of the story")
+    score: Optional[int] = Field(None, description="Score of the story")
+    descendants: Optional[int] = Field(None, description="Number of comments")
+    error: Optional[str] = Field(None, description="Error message if any")
 
 # ----- API Helpers -----
 
@@ -697,21 +712,567 @@ def hn_trending_topics(limit: int = 30, story_type: str = "top") -> str:
     return f"Please identify 3-5 major trending topics or themes from the {limit} {story_type_desc} Hacker News stories. For each topic, list the relevant stories and explain why this is trending. Note any significant patterns in the types of stories currently popular."
 
 @mcp.prompt()
-def hn_user_profile_analysis(username: str) -> str:
+async def hn_user_profile_analysis(username: str) -> str:
     """
     Creates a prompt template for the LLM to analyze a Hacker News user's profile.
     
     When a user makes a simple request like:
     "Tell me about HN user 'dang'" or "What topics does 'pg' write about on Hacker News?"
-    this function generates a detailed template that guides the LLM's response.
     
-    Note: This is NOT what the user types. The user makes a simple request, and this
+    This function extracts the username and creates a detailed prompt template. This
     template is what gets sent to the LLM to help it generate a comprehensive response.
     
     Args:
         username: The username of the Hacker News user to analyze
     """
-    return f"Please analyze the Hacker News profile for user '{username}'. Summarize their activity and interests based on submissions and comments, identify key topics they engage with, note any expertise areas they demonstrate, and analyze their interaction style and community engagement. Provide a thoughtful analysis while respecting the user's privacy."
+    # This function is already marked as async, but we need to properly await the get_user call
+    user = await get_user(username)
+    
+    return f"""
+    You are analyzing the Hacker News profile for user '{username}'.
+    
+    User data: {json.dumps(user.model_dump(), indent=2)}
+    
+    Based on this information, provide a comprehensive analysis of this user's activity, interests, and contributions to Hacker News.
+    Consider factors such as:
+    - Account age and karma level
+    - Types of stories they submit or comment on
+    - Common themes or topics in their activity
+    - Their communication style and community engagement
+    
+    Format your response in a clear, organized manner with appropriate headings and bullet points where helpful.
+    """
+
+@mcp.prompt()
+async def hn_story_content_by_id(story_id: int) -> str:
+    """
+    Creates a prompt template for the LLM to analyze the full content of a Hacker News story by ID.
+    
+    When a user makes a simple request like:
+    "Show me the article from HN story 12345" or "What's the full content of that post about quantum computing?"
+    
+    This function fetches the story content and creates a detailed prompt template. This
+    template is what gets sent to the LLM to help it generate a comprehensive response.
+    
+    Args:
+        story_id: The ID of the Hacker News story to retrieve content for
+    """
+    story_data = await get_item(story_id)
+    content_data = await get_story_content(story_id, format="markdown")
+    
+    return f"""
+    You are analyzing a Hacker News story and its linked content.
+    
+    ## Story Details
+    Title: {story_data.title}
+    Posted by: {story_data.by}
+    Score: {story_data.score}
+    URL: {story_data.url}
+    Comments: {story_data.descendants}
+    
+    ## Article Content
+    {content_data.get('content', 'No content available')}
+    
+    Please provide a comprehensive analysis of this content. Consider:
+    - The main points and arguments presented
+    - Key facts and information
+    - The quality and credibility of the source
+    - How this relates to current trends or discussions in technology
+    
+    Format your response in a clear, organized manner with appropriate headings and sections.
+    """
+
+@mcp.prompt()
+async def hn_story_content_by_title(title: str) -> str:
+    """
+    Creates a prompt template for the LLM to analyze the full content of a Hacker News story by title.
+    
+    When a user makes a simple request like:
+    "Show me the full article about quantum computing from HN" or "Get me the content of that story about AI ethics"
+    
+    This function searches for the story by title, fetches its content, and creates a detailed prompt template.
+    This template is what gets sent to the LLM to help it generate a comprehensive response.
+    
+    Args:
+        title: The title or keywords to identify the story
+    """
+    content_data = await get_story_content_by_title(title, format="markdown")
+    
+    if content_data.get('error'):
+        return f"""
+        You were asked to analyze a Hacker News story about "{title}", but no matching story was found.
+        
+        Please inform the user that you couldn't find a story matching that description and suggest they try:
+        1. Using different keywords
+        2. Being more specific about the story they're looking for
+        3. Providing a story ID if they have it
+        """
+    
+    return f"""
+    You are analyzing a Hacker News story and its linked content.
+    
+    ## Story Details
+    Title: {content_data.get('title', 'No title')}
+    Posted by: {content_data.get('by', 'Unknown')}
+    Score: {content_data.get('score', 'Unknown')}
+    URL: {content_data.get('url', 'No URL')}
+    Comments: {content_data.get('descendants', 'Unknown')}
+    
+    ## Article Content
+    {content_data.get('content', 'No content available')}
+    
+    Please provide a comprehensive analysis of this content. Consider:
+    - The main points and arguments presented
+    - Key facts and information
+    - The quality and credibility of the source
+    - How this relates to current trends or discussions in technology
+    
+    Format your response in a clear, organized manner with appropriate headings and sections.
+    """
+
+# ----- Advanced Prompt Templates -----
+
+@mcp.prompt()
+async def hn_router(query: str) -> str:
+    """
+    A router prompt that analyzes the user's query and directs it to the appropriate specialized prompt.
+    
+    When a user makes any Hacker News related query, this function analyzes the intent
+    and provides guidance on how to best respond using available tools and data.
+    
+    Args:
+        query: The user's natural language query about Hacker News
+    """
+    # Get the latest top stories to provide context
+    top_stories = await get_top_stories(10)
+    story_data = []
+    
+    for story_id in top_stories[:5]:  # Limit to 5 for performance
+        try:
+            story = await get_item(story_id)
+            story_data.append({
+                "id": story_id,
+                "title": story.title,
+                "score": story.score,
+                "by": story.by,
+                "descendants": story.descendants
+            })
+        except Exception as e:
+            logger.error(f"Error fetching story {story_id}: {e}")
+    
+    return f"""
+    You are an expert on Hacker News content and need to analyze the following user query:
+    
+    USER QUERY: "{query}"  
+    
+    Current top stories on Hacker News:
+    {json.dumps(story_data, indent=2)}
+    
+    Based on the query, determine the most appropriate way to respond using the Hacker News MCP tools and data.
+    
+    First, identify the user's intent. Are they looking for:
+    1. Information about specific stories (by ID or title)
+    2. Content of articles linked from stories
+    3. Comments or discussion analysis
+    4. User profile information
+    5. Trending topics or patterns
+    6. Comparisons between stories
+    7. Historical data or time-based analysis
+    8. Something else (specify)
+    
+    Then, recommend the best approach to fulfill this request using available tools:
+    - For specific stories: Use get_item() or find_stories_by_title()
+    - For article content: Use get_story_content() or get_story_content_by_title()
+    - For comments: Use get_story_with_comments()
+    - For user profiles: Use get_user()
+    - For trends: Analyze multiple stories from get_top_stories(), get_new_stories(), etc.
+    
+    Provide a detailed plan for how to best respond to this query, including which tools to use and how to process and present the information.
+    """
+
+@mcp.prompt()
+async def hn_compare_stories(story_ids: List[int]) -> str:
+    """
+    Creates a prompt template for comparing multiple Hacker News stories.
+    
+    When a user makes a request like:
+    "Compare HN stories 12345 and 67890" or "What's the difference between those two quantum computing articles?"
+    
+    Args:
+        story_ids: List of story IDs to compare
+    """
+    stories_data = []
+    
+    for story_id in story_ids:
+        try:
+            story = await get_item(story_id)
+            content_data = await get_story_content(story_id, format="markdown")
+            
+            stories_data.append({
+                "id": story_id,
+                "title": story.title,
+                "by": story.by,
+                "score": story.score,
+                "url": story.url,
+                "descendants": story.descendants,
+                "content_excerpt": content_data.get("content", "No content available")[:500] + "..." if content_data.get("content") else "No content available"
+            })
+        except Exception as e:
+            logger.error(f"Error fetching story {story_id}: {e}")
+            stories_data.append({
+                "id": story_id,
+                "error": str(e)
+            })
+    
+    return f"""
+    You are comparing multiple Hacker News stories to identify similarities, differences, and relationships.
+    
+    ## Stories to Compare:
+    {json.dumps(stories_data, indent=2)}
+    
+    Please provide a comprehensive comparison of these stories, including:
+    
+    1. **Overview Comparison**:
+       - Subject matter and main topics
+       - Publication timing and context
+       - Popularity metrics (scores, comments)
+       
+    2. **Content Comparison**:
+       - Key arguments or information presented
+       - Perspective and approach
+       - Quality and depth of coverage
+       
+    3. **Discussion Comparison**:
+       - Types of comments and reactions
+       - Community interest patterns
+       - Different viewpoints represented
+       
+    4. **Relationship Analysis**:
+       - How these stories relate to each other
+       - Whether they represent different perspectives on the same topic
+       - Chronological or logical relationships
+       
+    5. **Synthesis**:
+       - What can be learned from examining these stories together
+       - Which provides better coverage and why
+       - What important context is gained from the comparison
+       
+    Format your response in a clear, organized manner with appropriate headings and sections.
+    """
+
+@mcp.prompt()
+async def hn_trend_analysis(days: int = 1, story_type: str = "top", topic: Optional[str] = None) -> str:
+    """
+    Creates a prompt template for analyzing trends on Hacker News over time.
+    
+    When a user makes a request like:
+    "What's been trending on HN this week?" or "How has discussion about AI changed over the last month?"
+    
+    Args:
+        days: Number of days to analyze
+        story_type: Type of stories to analyze (top, new, best, ask, show)
+        topic: Optional specific topic to track
+    """
+    # Get current stories
+    current_stories = []
+    if story_type == "top":
+        current_ids = await get_top_stories(30)
+    elif story_type == "new":
+        current_ids = await get_new_stories(30)
+    elif story_type == "best":
+        current_ids = await get_best_stories(30)
+    elif story_type == "ask":
+        current_ids = await get_ask_stories(30)
+    elif story_type == "show":
+        current_ids = await get_show_stories(30)
+    else:
+        current_ids = await get_top_stories(30)
+    
+    for story_id in current_ids[:15]:  # Limit to 15 for performance
+        try:
+            story = await get_item(story_id)
+            if topic and topic.lower() not in story.title.lower():
+                continue
+            current_stories.append({
+                "id": story_id,
+                "title": story.title,
+                "score": story.score,
+                "by": story.by,
+                "time": story.time,
+                "descendants": story.descendants
+            })
+        except Exception as e:
+            logger.error(f"Error fetching story {story_id}: {e}")
+    
+    # Get historical stories
+    historical_stories = []
+    if days > 0:
+        historical_data = await search_by_date(days_ago=days, limit=30)
+        for story in historical_data[:15]:  # Limit to 15 for performance
+            if topic and topic.lower() not in story.get("title", "").lower():
+                continue
+            historical_stories.append(story)
+    
+    return f"""
+    You are analyzing trends on Hacker News over time.
+    
+    ## Current Stories ({story_type}):
+    {json.dumps(current_stories, indent=2)}
+    
+    ## Historical Stories (from {days} days ago):
+    {json.dumps(historical_stories, indent=2)}
+    
+    {f"## Focused Topic: {topic}" if topic else ""}
+    
+    Please provide a comprehensive trend analysis, including:
+    
+    1. **Topic Trends**:
+       - What subjects are currently popular vs. {days} days ago
+       - New emerging topics or technologies
+       - Topics that have decreased in popularity
+       
+    2. **Engagement Patterns**:
+       - Changes in upvoting patterns
+       - Changes in comment activity
+       - Types of stories getting the most engagement
+       
+    3. **Content Sources**:
+       - Trends in where popular content is coming from
+       - New or increasingly popular websites or authors
+       
+    4. **Community Interests**:
+       - Shifts in what the HN community finds interesting
+       - Changes in the types of technical topics discussed
+       - Any observable changes in community values or priorities
+       
+    5. **Predictive Insights**:
+       - What these trends might suggest about future interests
+       - Technologies or topics likely to gain more attention
+       - How these trends relate to broader industry movements
+       
+    Format your response in a clear, organized manner with appropriate headings, bullet points, and if relevant, a summary of the most significant trends observed.
+    """
+
+@mcp.prompt()
+async def hn_advanced_search(query: str, days: int = 7, min_score: int = 10, min_comments: int = 5) -> str:
+    """
+    Creates a prompt template for advanced search across Hacker News stories.
+    
+    When a user makes a request like:
+    "Find popular stories about quantum computing with lots of discussion" or 
+    "What are the highest-rated AI stories from the past month?"
+    
+    Args:
+        query: Search query for story titles
+        days: How many days back to search
+        min_score: Minimum score threshold
+        min_comments: Minimum comment threshold
+    """
+    # Search for stories matching the query
+    matching_stories = await find_stories_by_title(query, limit=30)
+    
+    # Get stories from the past X days
+    recent_stories = await search_by_date(days_ago=days, limit=50)
+    
+    # Filter and combine results
+    filtered_results = []
+    seen_ids = set()
+    
+    # Process matching stories from title search
+    for story in matching_stories:
+        story_id = story.get("id")
+        if story_id in seen_ids:
+            continue
+            
+        score = story.get("score", 0)
+        comments = story.get("descendants", 0)
+        
+        if score >= min_score and comments >= min_comments:
+            filtered_results.append(story)
+            seen_ids.add(story_id)
+    
+    # Process stories from date search
+    for story in recent_stories:
+        story_id = story.get("id")
+        if story_id in seen_ids:
+            continue
+            
+        title = story.get("title", "").lower()
+        if query.lower() not in title:
+            continue
+            
+        score = story.get("score", 0)
+        comments = story.get("descendants", 0)
+        
+        if score >= min_score and comments >= min_comments:
+            filtered_results.append(story)
+            seen_ids.add(story_id)
+    
+    # Sort by score (descending)
+    filtered_results.sort(key=lambda x: x.get("score", 0), reverse=True)
+    
+    return f"""
+    You are providing results for an advanced search across Hacker News stories.
+    
+    ## Search Parameters:
+    - Query: "{query}"  
+    - Timeframe: Past {days} days
+    - Minimum Score: {min_score}
+    - Minimum Comments: {min_comments}
+    
+    ## Search Results:
+    {json.dumps(filtered_results, indent=2)}
+    
+    Please analyze these search results and provide:
+    
+    1. **Overview of Results**:
+       - Number of matching stories found
+       - Quality and relevance of the matches
+       - Distribution across the time period
+       
+    2. **Top Stories Analysis**:
+       - Detailed look at the highest-scoring stories
+       - What made these stories particularly popular
+       - Common themes among popular stories
+       
+    3. **Discussion Hotspots**:
+       - Stories with the most active discussions
+       - Types of topics generating the most comments
+       - Any controversial or divisive stories
+       
+    4. **Content Patterns**:
+       - Common sources or authors
+       - Types of content (tutorials, news, research, etc.)
+       - Technical depth and focus areas
+       
+    5. **Recommendations**:
+       - Most valuable stories to read based on the query
+       - Different perspectives represented in the results
+       - Related topics the user might be interested in
+       
+    Format your response in a clear, organized manner with appropriate headings and sections. Include direct links to the most relevant stories.
+    """
+
+@mcp.prompt()
+async def hn_content_filter(story_id: int, filter_type: str = "technical") -> str:
+    """
+    Creates a prompt template for filtering and extracting specific types of content from stories.
+    
+    When a user makes a request like:
+    "Show me just the technical parts of HN story 12345" or 
+    "Extract the code examples from that article about Rust"
+    
+    Args:
+        story_id: The ID of the Hacker News story
+        filter_type: Type of content to filter for (technical, code, opinion, summary, etc.)
+    """
+    # Get the story content
+    story_data = await get_item(story_id)
+    content_data = await get_story_content(story_id, format="markdown")
+    
+    filter_instructions = {
+        "technical": "Extract and focus on technical details, specifications, methodologies, and implementation information. Filter out opinions, marketing content, and non-technical discussion.",
+        "code": "Extract and focus on code examples, programming snippets, APIs, and technical implementations. Format these properly and explain their purpose.",
+        "opinion": "Extract and focus on opinions, perspectives, analyses, and subjective assessments. Identify the key viewpoints presented.",
+        "summary": "Create a concise summary that captures the essential information in a fraction of the length. Focus on the most important points only.",
+        "beginner": "Simplify complex technical concepts for beginners. Explain terminology, provide context, and make the content accessible to non-experts.",
+        "critical": "Analyze the content critically, identifying potential flaws, biases, unsupported claims, or limitations in the methodology or conclusions."
+    }
+    
+    instruction = filter_instructions.get(filter_type, "Extract the most relevant and useful information based on the user's request.")
+    
+    return f"""
+    You are filtering and extracting specific content from a Hacker News story.
+    
+    ## Story Details:
+    Title: {story_data.title}
+    URL: {story_data.url}
+    Posted by: {story_data.by}
+    
+    ## Content to Filter:
+    {content_data.get('content', 'No content available')}
+    
+    ## Filtering Instructions:
+    {instruction}
+    
+    Please process the content according to the filtering instructions. Maintain the accuracy of the information while focusing on the requested content type. Format your response in a clear, organized manner with appropriate headings and sections.
+    """
+
+@mcp.prompt()
+async def hn_multi_source_analysis(query: str, sources_count: int = 3) -> str:
+    """
+    Creates a prompt template for analyzing multiple sources on the same topic from Hacker News.
+    
+    When a user makes a request like:
+    "Compare different perspectives on blockchain from HN" or 
+    "What are the various opinions about the new MacBook Pro?"
+    
+    Args:
+        query: The topic to analyze multiple sources for
+        sources_count: Number of sources to analyze
+    """
+    # Find stories matching the query
+    matching_stories = await find_stories_by_title(query, limit=sources_count * 2)  # Get extra in case some fail
+    
+    # Get content for each story
+    sources_data = []
+    for story in matching_stories[:sources_count]:
+        try:
+            story_id = story.get("id")
+            content_data = await get_story_content(story_id, format="markdown")
+            
+            if content_data.get("error"):
+                continue
+                
+            sources_data.append({
+                "id": story_id,
+                "title": story.get("title"),
+                "url": story.get("url"),
+                "by": story.get("by"),
+                "score": story.get("score"),
+                "content_excerpt": content_data.get("content", "No content available")[:1000] + "..." if content_data.get("content") else "No content available"
+            })
+            
+            if len(sources_data) >= sources_count:
+                break
+        except Exception as e:
+            logger.error(f"Error processing story {story.get('id')}: {e}")
+    
+    return f"""
+    You are analyzing multiple sources on the topic of "{query}" from Hacker News.
+    
+    ## Sources to Analyze:
+    {json.dumps(sources_data, indent=2)}
+    
+    Please provide a comprehensive multi-source analysis, including:
+    
+    1. **Topic Overview**:
+       - The key aspects of {query} being discussed
+       - Why this topic is relevant or important
+       - The context surrounding these discussions
+       
+    2. **Perspective Comparison**:
+       - Different viewpoints represented across sources
+       - Areas of agreement and disagreement
+       - Unique insights from each source
+       
+    3. **Evidence & Support**:
+       - Types of evidence used across sources
+       - Strength of supporting arguments
+       - Credibility and expertise factors
+       
+    4. **Bias Assessment**:
+       - Potential biases in each source
+       - How these biases affect the presentation
+       - Balance of perspectives overall
+       
+    5. **Synthesis & Conclusion**:
+       - Integrated understanding from all sources
+       - Most compelling arguments and insights
+       - Areas needing further information or research
+       
+    Format your response in a clear, organized manner with appropriate headings and sections. Aim to provide a balanced and nuanced analysis that helps the user understand the full spectrum of perspectives on this topic.
+    """
 
 # ----- Lifecycle Management -----
 
@@ -726,6 +1287,223 @@ async def teardown():
     logger.info("Cleaning up Hacker News MCP Server resources")
     # Close the HTTP client
     await http_client.aclose()
+
+# ----- Content Fetching and Parsing -----
+
+async def fetch_url_content(url: str) -> Dict[str, Any]:
+    """
+    Fetch content from a URL.
+    
+    Args:
+        url: The URL to fetch content from
+        
+    Returns:
+        Dictionary containing the content and metadata
+    """
+    try:
+        response = await http_client.get(url, follow_redirects=True)
+        response.raise_for_status()
+        content_type = response.headers.get("content-type", "")
+        
+        if "text/html" in content_type:
+            return {
+                "content": response.text,
+                "content_type": "html",
+                "url": str(response.url)
+            }
+        elif "application/json" in content_type:
+            return {
+                "content": response.text,
+                "content_type": "json",
+                "url": str(response.url)
+            }
+        else:
+            return {
+                "content": response.text,
+                "content_type": "text",
+                "url": str(response.url)
+            }
+    except Exception as e:
+        logger.error(f"Error fetching URL {url}: {e}")
+        return {
+            "content": "",
+            "content_type": "error",
+            "url": url,
+            "error": str(e)
+        }
+
+def html_to_markdown(html_content: str) -> str:
+    """
+    Convert HTML content to Markdown.
+    
+    Args:
+        html_content: HTML content to convert
+        
+    Returns:
+        Markdown formatted content
+    """
+    h = html2text.HTML2Text()
+    h.ignore_links = False
+    h.ignore_images = False
+    h.ignore_tables = False
+    h.body_width = 0  # No wrapping
+    return h.handle(html_content)
+
+def extract_main_content(html_content: str) -> str:
+    """
+    Extract the main content from HTML using BeautifulSoup.
+    Attempts to find the main article content and remove navigation, ads, etc.
+    
+    Args:
+        html_content: HTML content to parse
+        
+    Returns:
+        Extracted main content as HTML
+    """
+    try:
+        soup = BeautifulSoup(html_content, 'html.parser')
+        
+        # Remove common non-content elements
+        for element in soup.select('nav, header, footer, aside, script, style, iframe, .ads, .navigation, .menu, .sidebar, .comments'):
+            element.decompose()
+        
+        # Try to find the main content
+        main_content = None
+        for selector in ['article', 'main', '.content', '.post', '.article', '#content', '#main']:
+            main_content = soup.select_one(selector)
+            if main_content:
+                break
+        
+        # If we found a main content element, return it, otherwise return the body
+        if main_content:
+            return str(main_content)
+        else:
+            # If no main content found, return the body without head elements
+            if soup.body:
+                return str(soup.body)
+            return str(soup)
+    except Exception as e:
+        logger.error(f"Error extracting main content: {e}")
+        return html_content
+
+@mcp.tool()
+async def get_story_content(story_id: int, format: Literal["json", "markdown"] = "markdown") -> Dict[str, Any]:
+    """
+    Get the content of a Hacker News story by fetching its URL.
+    
+    Args:
+        story_id: The ID of the Hacker News story
+        format: Output format (json or markdown)
+        
+    Returns:
+        The story content and metadata
+    """
+    # Get the story details
+    try:
+        story = await get_item(story_id)
+        
+        # Check if the story has a URL
+        if not story.url:
+            return ContentResponse(
+                title=story.title or "No title",
+                url="",
+                content=story.text or "No content available",
+                content_type="text",
+                story_id=story_id,
+                by=story.by,
+                time=story.time,
+                score=story.score,
+                descendants=story.descendants,
+                error="Story does not have a URL"
+            ).model_dump()
+        
+        # Fetch the content from the URL
+        url_data = await fetch_url_content(story.url)
+        
+        if url_data.get("content_type") == "error":
+            return ContentResponse(
+                title=story.title or "No title",
+                url=story.url,
+                content="",
+                content_type="error",
+                story_id=story_id,
+                by=story.by,
+                time=story.time,
+                score=story.score,
+                descendants=story.descendants,
+                error=url_data.get("error", "Failed to fetch content")
+            ).model_dump()
+        
+        # Process the content based on the format
+        if url_data.get("content_type") == "html":
+            # Extract the main content
+            main_content = extract_main_content(url_data["content"])
+            
+            # Convert to markdown if requested
+            if format == "markdown":
+                processed_content = html_to_markdown(main_content)
+                content_type = "markdown"
+            else:
+                processed_content = main_content
+                content_type = "html"
+        else:
+            # For non-HTML content, just return as is
+            processed_content = url_data["content"]
+            content_type = url_data["content_type"]
+        
+        return ContentResponse(
+            title=story.title or "No title",
+            url=url_data["url"],
+            content=processed_content,
+            content_type=content_type,
+            story_id=story_id,
+            by=story.by,
+            time=story.time,
+            score=story.score,
+            descendants=story.descendants
+        ).model_dump()
+    
+    except Exception as e:
+        logger.error(f"Error getting story content for ID {story_id}: {e}")
+        return ContentResponse(
+            title="Error",
+            url="",
+            content="",
+            content_type="error",
+            story_id=story_id,
+            error=str(e)
+        ).model_dump()
+
+@mcp.tool()
+async def get_story_content_by_title(title: str, format: Literal["json", "markdown"] = "markdown") -> Dict[str, Any]:
+    """
+    Get the content of a Hacker News story by title by fetching its URL.
+    
+    Args:
+        title: The title or keywords to search for
+        format: Output format (json or markdown)
+        
+    Returns:
+        The story content and metadata
+    """
+    # Find stories matching the title
+    matching_stories = await find_stories_by_title(title, limit=1)
+    
+    if not matching_stories:
+        return ContentResponse(
+            title="Not found",
+            url="",
+            content="",
+            content_type="error",
+            story_id=0,
+            error=f"No stories found matching '{title}'"
+        ).model_dump()
+    
+    # Get the first matching story
+    story = matching_stories[0]
+    
+    # Get the content using the story ID
+    return await get_story_content(story["id"], format)
 
 # ----- Custom Routes -----
 
@@ -913,6 +1691,25 @@ def main():
                 description="Find and retrieve a story by its title or keywords, along with its comments")
         async def api_get_story_by_title(title: str):
             return await get_story_by_title(title)
+        
+        # --- Content Endpoints ---
+        @app.get("/api/story/{story_id}/content", tags=["Content"], 
+                response_model=ContentResponse,
+                summary="Get story content",
+                description="Get the content of a Hacker News story by fetching its URL")
+        async def api_get_story_content(story_id: int, format: str = "markdown"):
+            if format not in ["json", "markdown"]:
+                format = "markdown"
+            return await get_story_content(story_id, format)
+        
+        @app.get("/api/story/content-by-title", tags=["Content"], 
+                response_model=ContentResponse,
+                summary="Get story content by title",
+                description="Get the content of a Hacker News story by title by fetching its URL")
+        async def api_get_story_content_by_title(title: str, format: str = "markdown"):
+            if format not in ["json", "markdown"]:
+                format = "markdown"
+            return await get_story_content_by_title(title, format)
             
         # --- Other Endpoints ---
         @app.get("/api/updates", tags=["Updates"], response_model=UpdatesResponse,
@@ -947,6 +1744,7 @@ def main():
                 {"name": "Users", "description": "Operations related to Hacker News users"},
                 {"name": "Stories", "description": "Operations related to story listings and retrieval"},
                 {"name": "Search", "description": "Search operations for finding stories"},
+                {"name": "Content", "description": "Operations for retrieving and parsing content from story URLs"},
                 {"name": "Updates", "description": "Operations for getting updates from Hacker News"},
                 {"name": "System", "description": "System operations like health checks"}
             ]

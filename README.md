@@ -62,6 +62,11 @@ All endpoints are available by default at `http://localhost:8000` (or your confi
 - `GET /api/story/by-title?title=YOUR_TITLE` — Get a story (and comments) by title/keywords
 - `GET /api/story/{story_id}/comments?comment_limit=10` — Get a story and its top comments
 
+#### **Content Retrieval**
+- `GET /api/story/{story_id}/content?format=markdown` — Get the actual content from a story's URL
+- `GET /api/story/content-by-title?title=YOUR_TITLE&format=markdown` — Get content by story title
+  - `format` parameter accepts `markdown` (default) or `json`
+
 #### **Users**
 - `GET /api/user/{username}` — Get a Hacker News user by username
 
@@ -101,6 +106,14 @@ curl "http://localhost:8000/api/stories/search?query=AI+ethics&limit=3"
 **Get a story and its comments by title:**
 ```bash
 curl "http://localhost:8000/api/story/by-title?title=OpenAI+GPT-4"
+```
+**Get the actual content from a story URL (as Markdown):**
+```bash
+curl "http://localhost:8000/api/story/12345/content?format=markdown"
+```
+**Get content by story title:**
+```bash
+curl "http://localhost:8000/api/story/content-by-title?title=quantum+computing&format=markdown"
 ```
 **Health check:**
 ```bash
@@ -237,6 +250,10 @@ docker-compose up -d
   - `get_ask_stories(limit)`: Get Ask HN stories
   - `get_show_stories(limit)`: Get Show HN stories
   - `get_job_stories(limit)`: Get job stories
+- 📝 **Content Retrieval**
+  - `get_story_content(story_id, format)`: Get the actual content from a story's URL
+  - `get_story_content_by_title(title, format)`: Get content by story title
+  - Format options: `"markdown"` (default) or `"json"`
 - 💬 **Advanced Story Retrieval**
   - `get_story_with_comments(story_id, comment_limit)`: Get a story with its comments
   - `find_stories_by_title(query, limit)`: Find stories by title or keywords
@@ -262,14 +279,30 @@ docker-compose up -d
 
 > 💡 **Natural Language Friendly:** Users can reference stories by title, keywords, or just ask questions in plain English!
 
+- 🧠 **Smart Router**
+  - `hn_router(query)`: Analyzes any HN-related query and routes to the best tools and approach
+
 - 📝 **Story Analysis**
   - `hn_story_summary_by_id(story_id)`: Summarize a Hacker News story by ID
-  - `hn_story_summary_by_title(title)`: Summarize a Hacker News story by title or keywords
-  - `hn_story_summary_detailed_by_id(story_id)`: Detailed analysis by ID
-  - `hn_story_summary_detailed_by_title(title)`: Detailed analysis by title
-- 📈 **Trending & User Analysis**
-  - `hn_trending_topics(limit, story_type)`: Identify trending topics
-  - `hn_user_profile_analysis(username)`: Analyze a user's profile and submission history
+  - `hn_story_summary_by_title(title)`: Summarize a story by title/keywords
+  - `hn_story_comment_analysis(title|id)`: Analyze comments for a story
+
+- 📰 **Content Retrieval & Analysis**
+  - `hn_story_content_by_id(story_id)`: Get and analyze the full article content from a story's URL
+  - `hn_story_content_by_title(title)`: Get and analyze content by searching for a story by title/keywords
+  - `hn_content_filter(story_id, filter_type)`: Extract specific types of content (technical, code, opinions, etc.)
+
+- 🔎 **Advanced Search & Comparison**
+  - `hn_advanced_search(query, days, min_score, min_comments)`: Find stories matching specific criteria
+  - `hn_compare_stories(story_ids)`: Compare multiple stories to identify similarities and differences
+  - `hn_multi_source_analysis(query, sources_count)`: Analyze multiple sources on the same topic
+
+- 📈 **Trend Analysis**
+  - `hn_trending_topics()`: List current trending topics
+  - `hn_trend_analysis(days, story_type, topic)`: Analyze trends over time, optionally focused on a specific topic
+
+- 👤 **User Analysis**
+  - `hn_user_profile_analysis(username)`: Analyze a user's activity and interests
 
 #### 🗣️ Example User Requests
 
@@ -279,6 +312,49 @@ docker-compose up -d
 - "Give me a detailed analysis of the discussion on AI regulation"
 
 > ⚡ **No need for IDs!** Just ask naturally—this server matches your request to the right prompt and tools.
+
+### 💬 Advanced Prompt Examples
+
+#### Smart Router
+```
+"What can you tell me about quantum computing discussions on Hacker News?"
+```
+The router analyzes your query, identifies the intent, and recommends the best approach using available tools (e.g., search for quantum computing stories, analyze content, compare perspectives).
+
+#### Multi-Source Analysis
+```
+"Compare different perspectives on blockchain from Hacker News"
+"What are the various opinions about the new MacBook Pro?"
+```
+Retrieves multiple sources on the same topic, extracts their content, and provides a comprehensive analysis of different viewpoints, areas of agreement/disagreement, and synthesizes insights.
+
+#### Content Filtering
+```
+"Show me just the technical parts of HN story 12345"
+"Extract the code examples from that article about Rust"
+```
+Retrieves a story's content and filters it according to specific needs (technical details, code examples, opinions, beginner-friendly explanations, etc.).
+
+#### Advanced Search
+```
+"Find popular stories about quantum computing with lots of discussion"
+"What are the highest-rated AI stories from the past month?"
+```
+Performs advanced search with filtering by score, comment count, and timeframe, then analyzes the results.
+
+#### Trend Analysis
+```
+"How has discussion about AI changed on HN over the last month?"
+"What topics are gaining traction compared to last week?"
+```
+Compares current stories with historical data to identify emerging topics, changing interests, and community engagement patterns.
+
+#### Story Comparison
+```
+"Compare HN stories 12345 and 67890"
+"What's the difference between those two quantum computing articles?"
+```
+Compares multiple stories to identify similarities, differences, and relationships between them.
 
 ---
 
