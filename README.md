@@ -197,15 +197,6 @@ docker-compose up -d
 }
 ```
 
-**SSE (Remote):**
-```json
-{
-  "name": "Hacker News",
-  "url": "https://your-deployed-server.com/sse",
-  "transport": "sse"
-}
-```
-
 ### 🖥️ Windsurf/Cursor IDE Example
 
 **STDIO (Local):**
