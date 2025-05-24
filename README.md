@@ -526,6 +526,12 @@ This project is licensed under the GNU Affero General Public License v3.0 (AGPLv
 
 The AGPLv3 is a copyleft license that requires anyone who distributes your code or a derivative work to make the source available under the same terms, and also extends this requirement to users who interact with the software over a network.
 
+**COMMERCIAL USE WARNING** 
+
+If you want to use or deploy this code in any form as part of a monetised service to others, even if you don't specifically require payment for the code, you need to contact me for permission (this means _YOU_ Smithery/Glama or ANY similar services) - which will only be granted following payment of the appropriate licensing fee. No, you might not be charging for the use of the code itself, and you might be providing the infrastructure, but you'd be using _MY_ code to facilitate _YOUR_ service. That's an intrinsic dependency that **MUST** be licensed. **PAYWALLING** the use of Open Source Software is not democratising software it is gating it only for those who can afford to pay which is counter to the ethos of OpenSource Licensing.
+
+For anyone else, whether you're a business or individual, I hope it's of use to you. Enjoy.
+
 ## Acknowledgements
 
 - [Hacker News API](https://github.com/HackerNews/API)
